@@ -6,6 +6,7 @@
     <title>CHECK LIST HUB_LMG-48</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
@@ -212,8 +213,8 @@
                 <h1>Gerenciamento de Arquivo</h1>
                 <div class="upload-card" onclick="document.getElementById('file-input').click()">
                     <i class="fa-solid fa-cloud-arrow-up" style="font-size: 40px; color: #cbd5e1; margin-bottom: 15px;"></i>
-                    <p style="font-size: 16px; font-weight: bold;">Clique aqui para selecionar a planilha (.xlsx ou .csv)</p>
-                    <input type="file" id="file-input" style="display:none" onchange="processarPlanilha(event)">
+                    <p style="font-size: 16px; font-weight: bold;">Clique aqui para selecionar a planilha (.xlsx, .csv ou .zip)</p>
+                    <input type="file" id="file-input" style="display:none" accept=".xlsx, .xls, .csv, .zip" onchange="processarPlanilha(event)">
                 </div>
                 <div id="msg-import" style="margin-top: 20px; font-weight: bold; color: #22c55e; text-align: center;"></div>
                 <hr style="margin: 30px 0; border: none; border-top: 1px solid #e2e8f0;">
@@ -485,30 +486,104 @@
             atualizarContadoresDasPaginas();
         });
 
+        // Função interna auxiliar para tratar os objetos de dados da planilha já decodificados
+        async function salvarDadosPlanilha(json) {
+            const agrupado = {};
+
+            json.forEach(linha => {
+                const cid = String(linha['Receiver Name'] || '').toLowerCase();
+                let normal = cid.includes("catalao") || cid.includes("catalão") ? "Catalão" : cid.includes("monte carmelo") ? "Monte Carmelo" : "";
+                
+                if(normal) {
+                    const to = String(linha['TO Number']).trim();
+                    if(!agrupado[to]) agrupado[to] = { idTo: to, cidade: normal, isDataRow: true, qtdRepeticoes: 0 };
+                    agrupado[to].qtdRepeticoes++;
+                }
+            });
+
+            if (Object.keys(agrupado).length === 0) {
+                document.getElementById('msg-import').style.color = "#ef4444";
+                document.getElementById('msg-import').innerText = "⚠ Nenhuma TO válida de Catalão ou Monte Carmelo encontrada!";
+                return;
+            }
+
+            const batch = writeBatch(db);
+            Object.values(agrupado).forEach(obj => batch.set(doc(db, "checklist_tos", `to_${obj.idTo}`), obj));
+            await batch.commit();
+            document.getElementById('msg-import').style.color = "#22c55e";
+            document.getElementById('msg-import').innerText = "✔ Planilha processada e sincronizada!";
+        }
+
+        // Modificação cirúrgica para interceptar, descompactar o ZIP e ler o arquivo interno correto
         window.processarPlanilha = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            document.getElementById('msg-import').style.color = "#ff6a00";
+            document.getElementById('msg-import').innerText = "⏳ Lendo arquivo...";
+
+            const ext = file.name.split('.').pop().toLowerCase();
             const reader = new FileReader();
-            reader.onload = async (event) => {
-                const workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
-                const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
-                const agrupado = {};
 
-                json.forEach(linha => {
-                    const cid = String(linha['Receiver Name'] || '').toLowerCase();
-                    let normal = cid.includes("catalao") || cid.includes("catalão") ? "Catalão" : cid.includes("monte carmelo") ? "Monte Carmelo" : "";
-                    
-                    if(normal) {
-                        const to = String(linha['TO Number']).trim();
-                        if(!agrupado[to]) agrupado[to] = { idTo: to, cidade: normal, isDataRow: true, qtdRepeticoes: 0 };
-                        agrupado[to].qtdRepeticoes++;
+            if (ext === 'zip') {
+                reader.onload = function(event) {
+                    JSZip.loadAsync(event.target.result).then(function(zip) {
+                        let arquivoInterno = null;
+                        
+                        // Localiza o primeiro arquivo válido no pacote ZIP
+                        zip.forEach(function (relativePath, zipEntry) {
+                            if (!zipEntry.dir) {
+                                const subExt = zipEntry.name.split('.').pop().toLowerCase();
+                                if (['xlsx', 'xls', 'csv'].includes(subExt) && !arquivoInterno) {
+                                    arquivoInterno = zipEntry;
+                                }
+                            }
+                        });
+
+                        if (!arquivoInterno) {
+                            document.getElementById('msg-import').style.color = "#ef4444";
+                            document.getElementById('msg-import').innerText = "❌ Nenhum arquivo válido (.csv, .xlsx) no ZIP.";
+                            return;
+                        }
+
+                        // Processa baseado na extensão do arquivo extraído
+                        const subExt = arquivoInterno.name.split('.').pop().toLowerCase();
+                        if (subExt === 'csv') {
+                            arquivoInterno.async("string").then(function(conteudoTxt) {
+                                const workbook = XLSX.read(conteudoTxt, { type: 'string' });
+                                const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+                                salvarDadosPlanilha(json);
+                            });
+                        } else {
+                            arquivoInterno.async("arraybuffer").then(function(conteudoBuffer) {
+                                const workbook = XLSX.read(new Uint8Array(conteudoBuffer), { type: 'array' });
+                                const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+                                salvarDadosPlanilha(json);
+                            });
+                        }
+                    }).catch(function(err) {
+                        console.error(err);
+                        document.getElementById('msg-import').style.color = "#ef4444";
+                        document.getElementById('msg-import').innerText = "❌ Erro ao descompactar o ZIP.";
+                    });
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                // Fluxo normal para arquivos .xlsx ou .csv diretos
+                reader.onload = async (event) => {
+                    try {
+                        const workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
+                        const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+                        salvarDadosPlanilha(json);
+                    } catch (err) {
+                        console.error(err);
+                        document.getElementById('msg-import').style.color = "#ef4444";
+                        document.getElementById('msg-import').innerText = "❌ Erro ao ler a planilha.";
                     }
-                });
-
-                const batch = writeBatch(db);
-                Object.values(agrupado).forEach(obj => batch.set(doc(db, "checklist_tos", `to_${obj.idTo}`), obj));
-                await batch.commit();
-                document.getElementById('msg-import').innerText = "✔ Planilha processada e sincronizada!";
-            };
-            reader.readAsArrayBuffer(e.target.files[0]);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+            e.target.value = ''; // Limpa o input para novos uploads
         }
 
         window.copiarTOsDaFicha = function(cidadeFiltro) {
