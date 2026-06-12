@@ -486,7 +486,6 @@
             atualizarContadoresDasPaginas();
         });
 
-        // FUNÇÃO REESCRITA PARA SUPORTAR ZIP ADICIONANDO AS CONDIÇÕES SEM ALTERAR A ESTRUTURA DOS OUTROS COMPONENTES
         window.processarPlanilha = function(e) {
             const arquivoSelecionado = e.target.files[0];
             if (!arquivoSelecionado) return;
@@ -495,7 +494,6 @@
             reader.onload = async (event) => {
                 let bytesPlanilha = event.target.result;
 
-                // Condição: Se o nome do arquivo terminar com .zip, ele descompacta e pega o primeiro arquivo válido de dentro dele
                 if (arquivoSelecionado.name.toLowerCase().endsWith('.zip')) {
                     try {
                         const zip = await JSZip.loadAsync(bytesPlanilha);
@@ -514,19 +512,26 @@
                     }
                 }
 
-                // Fluxo original de leitura do XLSX / CSV com os dados extraídos
                 const workbook = XLSX.read(new Uint8Array(bytesPlanilha), { type: 'array' });
                 const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
                 const agrupado = {};
 
                 json.forEach(linha => {
-                    const cid = String(linha['Receiver Name'] || '').toLowerCase();
+                    const cid = String(linha['City'] || linha['Receiver Name'] || '').toLowerCase();
                     let normal = cid.includes("catalao") || cid.includes("catalão") ? "Catalão" : cid.includes("monte carmelo") ? "Monte Carmelo" : "";
                     
                     if(normal) {
-                        const to = String(linha['TO Number']).trim();
-                        if(!agrupado[to]) agrupado[to] = { idTo: to, cidade: normal, isDataRow: true, qtdRepeticoes: 0 };
-                        agrupado[to].qtdRepeticoes++;
+                        const to = String(linha['TO number'] || linha['TO Number'] || '').trim();
+                        // Captura o valor numérico correto da coluna da sua planilha (padrão 0 caso esteja em branco)
+                        const pacotesNaLinha = parseInt(linha['Number of assigned orders/TO'] || linha['Number of order/TO'] || 0, 10);
+                        
+                        if(to) {
+                            if(!agrupado[to]) {
+                                agrupado[to] = { idTo: to, cidade: normal, isDataRow: true, qtdRepeticoes: 0 };
+                            }
+                            // Soma o valor real da coluna ao invés de contar +1
+                            agrupado[to].qtdRepeticoes += pacotesNaLinha;
+                        }
                     }
                 });
 
@@ -605,7 +610,6 @@
             const catPac = cat.reduce((a, b) => a + b.qtdRepeticoes, 0);
             const mcPac = mc.reduce((a, b) => a + b.qtdRepeticoes, 0);
 
-            // Injeta os valores direto nos ID's dos cabeçalhos oficiais
             document.getElementById('head-cat-c-tos').innerText = cat.length;
             document.getElementById('head-cat-c-pac').innerText = catPac;
             document.getElementById('head-cat-qr-tos').innerText = cat.length;
