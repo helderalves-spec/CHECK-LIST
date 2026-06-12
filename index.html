@@ -6,8 +6,8 @@
     <title>CHECK LIST HUB_LMG-48</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
     <style>
@@ -47,6 +47,9 @@
         .screen.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
+        /* Mini Painel Volumétrico das Fichas (Ocultado em tela, pois agora está no cabeçalho) */
+        .page-volumetrics { display: none; }
+
         /* --- CABEÇALHO OFICIAL --- */
         .official-header { background: white; border-radius: 8px; border: 1px solid #cbd5e1; padding: 15px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .admin-info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 15px; }
@@ -81,7 +84,7 @@
         .fill-orange { background: #ff6a00; }
         .fill-purple { background: #9333ea; }
 
-        /* --- CONFIGURAÇÃO DA TABELA --- */
+        /* --- CONFIGURAÇÃO DA TABELA (ESPAÇAMENTO DE 1 DEDO) --- */
         .table-card { background: white; border-radius: 8px; border: 1px solid #cbd5e1; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.04); width: 100%; }
         .main-table { width: 100%; border-collapse: collapse; text-align: left; }
         .main-table th { background-color: #2f3542; color: white; padding: 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #1e222b; }
@@ -93,6 +96,7 @@
         .city-label { color: #2980b9; font-weight: 800; font-size: 13px; }
         .status-badge { color: #7f8c8d; font-weight: normal; font-size: 11px; }
         
+        /* Quadrado Retangular para o Visto do Conferente */
         .check-box { 
             appearance: none;
             -webkit-appearance: none;
@@ -125,6 +129,7 @@
         .btn-del { background: none; border: none; color: #cbd5e1; cursor: pointer; transition: 0.2s; font-size: 13px; }
         .btn-del:hover { color: #ef4444; }
 
+        /* Utilitários de Botões */
         .btn-action { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; text-transform: uppercase; font-size: 11px; display: inline-flex; align-items: center; gap: 8px; color: white; transition: 0.2s; }
         .btn-orange { background: #ff6a00; }
         .btn-black { background: #2f3542; }
@@ -209,7 +214,7 @@
                 <div class="upload-card" onclick="document.getElementById('file-input').click()">
                     <i class="fa-solid fa-cloud-arrow-up" style="font-size: 40px; color: #cbd5e1; margin-bottom: 15px;"></i>
                     <p style="font-size: 16px; font-weight: bold;">Clique aqui para selecionar a planilha (.xlsx, .csv ou .zip)</p>
-                    <input type="file" id="file-input" style="display:none" accept=".xlsx, .xls, .csv, .zip" onchange="processarPlanilha(event)">
+                    <input type="file" id="file-input" style="display:none" accept=".xlsx,.csv,.zip" onchange="processarPlanilha(event)">
                 </div>
                 <div id="msg-import" style="margin-top: 20px; font-weight: bold; color: #22c55e; text-align: center;"></div>
                 <hr style="margin: 30px 0; border: none; border-top: 1px solid #e2e8f0;">
@@ -473,6 +478,7 @@
                 if(d.id === "estados_checkboxes") checks = d.data();
             });
             
+            // ORDENAÇÃO DECRESCENTE AUTOMÁTICA
             dados.sort((a, b) => b.qtdRepeticoes - a.qtdRepeticoes);
 
             renderizarComponentes();
@@ -480,126 +486,56 @@
             atualizarContadoresDasPaginas();
         });
 
-        // NOVO ENGINE DE SALVAMENTO ROBUSTO COM HIGIENE DE DADOS E ANTI-DUPLICAÇÃO FANTASMA
-        async function salvarDadosPlanilha(json) {
-            const agrupado = {};
-
-            json.forEach(linha => {
-                // Remove acentuações comuns para prevenir erros de codificação de texto da Shopee
-                const cidRaw = String(linha['Receiver Name'] || '')
-                    .normalize("NFD")
-                    .replace(/[\u0300-\u036f]/g, "")
-                    .toLowerCase()
-                    .trim();
-
-                // Captura e limpa o código da TO removendo espaços invisíveis
-                const toRaw = String(linha['TO Number'] || '').trim();
-
-                // PROTEÇÃO CRÍTICA: Se a TO for inválida, nula ou lixo de célula vazia, ignora
-                if (!toRaw || toRaw === 'undefined' || toRaw === 'null' || toRaw === '') {
-                    return;
-                }
-
-                let normal = "";
-                if (cidRaw.includes("catalao")) {
-                    normal = "Catalão";
-                } else if (cidRaw.includes("monte carmelo") || cidRaw.includes("marmelo") || cidRaw.includes("mc-")) {
-                    normal = "Monte Carmelo";
-                }
-                
-                // Se pertence a uma das nossas duas rotas válidas
-                if(normal) {
-                    if(!agrupado[toRaw]) {
-                        agrupado[toRaw] = { 
-                            idTo: toRaw, 
-                            cidade: normal, 
-                            isDataRow: true, 
-                            qtdRepeticoes: 0 
-                        };
-                    }
-                    agrupado[toRaw].qtdRepeticoes++;
-                }
-            });
-
-            if (Object.keys(agrupado).length === 0) {
-                document.getElementById('msg-import').style.color = "#ef4444";
-                document.getElementById('msg-import').innerText = "⚠ Erro: Nenhuma TO válida encontrada para Catalão ou Monte Carmelo. Verifique a planilha.";
-                return;
-            }
-
-            const batch = writeBatch(db);
-            Object.values(agrupado).forEach(obj => batch.set(doc(db, "checklist_tos", `to_${obj.idTo}`), obj));
-            await batch.commit();
-            document.getElementById('msg-import').style.color = "#22c55e";
-            document.getElementById('msg-import').innerText = "✔ Planilha separada e sincronizada com sucesso!";
-        }
-
+        // FUNÇÃO REESCRITA PARA SUPORTAR ZIP ADICIONANDO AS CONDIÇÕES SEM ALTERAR A ESTRUTURA DOS OUTROS COMPONENTES
         window.processarPlanilha = function(e) {
-            const file = e.target.files[0];
-            if (!file) return;
+            const arquivoSelecionado = e.target.files[0];
+            if (!arquivoSelecionado) return;
 
-            document.getElementById('msg-import').style.color = "#ff6a00";
-            document.getElementById('msg-import').innerText = "⏳ Lendo e tratando arquivo...";
-
-            const ext = file.name.split('.').pop().toLowerCase();
             const reader = new FileReader();
+            reader.onload = async (event) => {
+                let bytesPlanilha = event.target.result;
 
-            if (ext === 'zip') {
-                reader.onload = function(event) {
-                    JSZip.loadAsync(event.target.result).then(function(zip) {
-                        let arquivoInterno = null;
+                // Condição: Se o nome do arquivo terminar com .zip, ele descompacta e pega o primeiro arquivo válido de dentro dele
+                if (arquivoSelecionado.name.toLowerCase().endsWith('.zip')) {
+                    try {
+                        const zip = await JSZip.loadAsync(bytesPlanilha);
+                        const arquivoInternoNome = Object.keys(zip.files).find(nome => nome.endsWith('.xlsx') || nome.endsWith('.csv'));
                         
-                        zip.forEach(function (relativePath, zipEntry) {
-                            if (!zipEntry.dir) {
-                                const subExt = zipEntry.name.split('.').pop().toLowerCase();
-                                if (['xlsx', 'xls', 'csv'].includes(subExt) && !arquivoInterno) {
-                                    arquivoInterno = zipEntry;
-                                }
-                            }
-                        });
-
-                        if (!arquivoInterno) {
-                            document.getElementById('msg-import').style.color = "#ef4444";
-                            document.getElementById('msg-import').innerText = "❌ Nenhum arquivo de dados válido no ZIP.";
+                        if (!arquivoInternoNome) {
+                            alert("Nenhum arquivo .xlsx ou .csv compatível foi localizado dentro da pasta .zip.");
                             return;
                         }
-
-                        const subExt = arquivoInterno.name.split('.').pop().toLowerCase();
-                        if (subExt === 'csv') {
-                            arquivoInterno.async("string").then(function(conteudoTxt) {
-                                const workbook = XLSX.read(conteudoTxt, { type: 'string' });
-                                const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
-                                salvarDadosPlanilha(json);
-                            });
-                        } else {
-                            arquivoInterno.async("arraybuffer").then(function(conteudoBuffer) {
-                                const workbook = XLSX.read(new Uint8Array(conteudoBuffer), { type: 'array' });
-                                const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
-                                salvarDadosPlanilha(json);
-                            });
-                        }
-                    }).catch(function(err) {
-                        console.error(err);
-                        document.getElementById('msg-import').style.color = "#ef4444";
-                        document.getElementById('msg-import').innerText = "❌ Falha ao descompactar pacote.";
-                    });
-                };
-                reader.readAsArrayBuffer(file);
-            } else {
-                reader.onload = async (event) => {
-                    try {
-                        const workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
-                        const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
-                        salvarDadosPlanilha(json);
+                        
+                        bytesPlanilha = await zip.files[arquivoInternoNome].async("uint8array");
                     } catch (err) {
                         console.error(err);
-                        document.getElementById('msg-import').style.color = "#ef4444";
-                        document.getElementById('msg-import').innerText = "❌ Falha ao processar as tabelas.";
+                        alert("Erro ao ler o arquivo compactado em .zip.");
+                        return;
                     }
-                };
-                reader.readAsArrayBuffer(file);
-            }
-            e.target.value = '';
+                }
+
+                // Fluxo original de leitura do XLSX / CSV com os dados extraídos
+                const workbook = XLSX.read(new Uint8Array(bytesPlanilha), { type: 'array' });
+                const json = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+                const agrupado = {};
+
+                json.forEach(linha => {
+                    const cid = String(linha['Receiver Name'] || '').toLowerCase();
+                    let normal = cid.includes("catalao") || cid.includes("catalão") ? "Catalão" : cid.includes("monte carmelo") ? "Monte Carmelo" : "";
+                    
+                    if(normal) {
+                        const to = String(linha['TO Number']).trim();
+                        if(!agrupado[to]) agrupado[to] = { idTo: to, cidade: normal, isDataRow: true, qtdRepeticoes: 0 };
+                        agrupado[to].qtdRepeticoes++;
+                    }
+                });
+
+                const batch = writeBatch(db);
+                Object.values(agrupado).forEach(obj => batch.set(doc(db, "checklist_tos", `to_${obj.idTo}`), obj));
+                await batch.commit();
+                document.getElementById('msg-import').innerText = "✔ Planilha processada e sincronizada!";
+            };
+            reader.readAsArrayBuffer(arquivoSelecionado);
         }
 
         window.copiarTOsDaFicha = function(cidadeFiltro) {
@@ -611,7 +547,7 @@
             const textoParaCopiar = listFiltrada.map(t => t.idTo).join("\n");
             
             navigator.clipboard.writeText(textoParaCopiar).then(() => {
-                alert(`Sucesso! ${listFiltrada.length} TOs foram copiadas para a Área de Transferência.`);
+                alert(`Sucesso! ${listFiltrada.length} TOs de ${cidadeFiltro} foram copiadas.`);
             }).catch(err => {
                 console.error("Erro ao copiar: ", err);
             });
@@ -669,6 +605,7 @@
             const catPac = cat.reduce((a, b) => a + b.qtdRepeticoes, 0);
             const mcPac = mc.reduce((a, b) => a + b.qtdRepeticoes, 0);
 
+            // Injeta os valores direto nos ID's dos cabeçalhos oficiais
             document.getElementById('head-cat-c-tos').innerText = cat.length;
             document.getElementById('head-cat-c-pac').innerText = catPac;
             document.getElementById('head-cat-qr-tos').innerText = cat.length;
