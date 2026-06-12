@@ -47,9 +47,6 @@
         .screen.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-        /* Mini Painel Volumétrico das Fichas (Ocultado em tela, pois agora está no cabeçalho) */
-        .page-volumetrics { display: none; }
-
         /* --- CABEÇALHO OFICIAL --- */
         .official-header { background: white; border-radius: 8px; border: 1px solid #cbd5e1; padding: 15px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .admin-info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 15px; }
@@ -84,7 +81,7 @@
         .fill-orange { background: #ff6a00; }
         .fill-purple { background: #9333ea; }
 
-        /* --- CONFIGURAÇÃO DA TABELA (ESPAÇAMENTO DE 1 DEDO) --- */
+        /* --- CONFIGURAÇÃO DA TABELA --- */
         .table-card { background: white; border-radius: 8px; border: 1px solid #cbd5e1; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.04); width: 100%; }
         .main-table { width: 100%; border-collapse: collapse; text-align: left; }
         .main-table th { background-color: #2f3542; color: white; padding: 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #1e222b; }
@@ -96,7 +93,6 @@
         .city-label { color: #2980b9; font-weight: 800; font-size: 13px; }
         .status-badge { color: #7f8c8d; font-weight: normal; font-size: 11px; }
         
-        /* Quadrado Retangular para o Visto do Conferente */
         .check-box { 
             appearance: none;
             -webkit-appearance: none;
@@ -129,7 +125,6 @@
         .btn-del { background: none; border: none; color: #cbd5e1; cursor: pointer; transition: 0.2s; font-size: 13px; }
         .btn-del:hover { color: #ef4444; }
 
-        /* Utilitários de Botões */
         .btn-action { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; text-transform: uppercase; font-size: 11px; display: inline-flex; align-items: center; gap: 8px; color: white; transition: 0.2s; }
         .btn-orange { background: #ff6a00; }
         .btn-black { background: #2f3542; }
@@ -478,7 +473,6 @@
                 if(d.id === "estados_checkboxes") checks = d.data();
             });
             
-            // ORDENAÇÃO DECRESCENTE AUTOMÁTICA
             dados.sort((a, b) => b.qtdRepeticoes - a.qtdRepeticoes);
 
             renderizarComponentes();
@@ -486,24 +480,45 @@
             atualizarContadoresDasPaginas();
         });
 
-        // Função interna auxiliar para tratar os objetos de dados da planilha já decodificados
+        // FUNÇÃO CORRIGIDA COM FILTRAGEM INDEPENDENTE E ROBUSTA DE ROTAS
         async function salvarDadosPlanilha(json) {
             const agrupado = {};
 
             json.forEach(linha => {
-                const cid = String(linha['Receiver Name'] || '').toLowerCase();
-                let normal = cid.includes("catalao") || cid.includes("catalão") ? "Catalão" : cid.includes("monte carmelo") ? "Monte Carmelo" : "";
+                // Captura o nome da coluna de destino e padroniza o texto
+                const receiverName = String(linha['Receiver Name'] || '').toLowerCase().trim();
+                let normal = "";
                 
+                // Validação estrita para Catalão (evita misturar rotas)
+                if (receiverName.includes("catalao") || receiverName.includes("catalão")) {
+                    normal = "Catalão";
+                } 
+                // Validação estrita para Monte Carmelo
+                else if (receiverName.includes("monte carmelo") || receiverName.includes("marmelo") || receiverName.includes("mc-")) {
+                    normal = "Monte Carmelo";
+                }
+                
+                // Processa a TO apenas se pertencer a uma das duas cidades mapeadas
                 if(normal) {
-                    const to = String(linha['TO Number']).trim();
-                    if(!agrupado[to]) agrupado[to] = { idTo: to, cidade: normal, isDataRow: true, qtdRepeticoes: 0 };
-                    agrupado[to].qtdRepeticoes++;
+                    const to = String(linha['TO Number'] || '').trim();
+                    // Evita gerar chaves nulas ou lixo de leitura de linhas vazias
+                    if (to && to !== 'undefined' && to !== '') {
+                        if(!agrupado[to]) {
+                            agrupado[to] = { 
+                                idTo: to, 
+                                cidade: normal, 
+                                isDataRow: true, 
+                                qtdRepeticoes: 0 
+                            };
+                        }
+                        agrupado[to].qtdRepeticoes++;
+                    }
                 }
             });
 
             if (Object.keys(agrupado).length === 0) {
                 document.getElementById('msg-import').style.color = "#ef4444";
-                document.getElementById('msg-import').innerText = "⚠ Nenhuma TO válida de Catalão ou Monte Carmelo encontrada!";
+                document.getElementById('msg-import').innerText = "⚠ Nenhuma TO válida de Catalão ou Monte Carmelo encontrada! Verifique os dados.";
                 return;
             }
 
@@ -511,10 +526,9 @@
             Object.values(agrupado).forEach(obj => batch.set(doc(db, "checklist_tos", `to_${obj.idTo}`), obj));
             await batch.commit();
             document.getElementById('msg-import').style.color = "#22c55e";
-            document.getElementById('msg-import').innerText = "✔ Planilha processada e sincronizada!";
+            document.getElementById('msg-import').innerText = "✔ Planilha processada e sincronizada com sucesso!";
         }
 
-        // Modificação cirúrgica para interceptar, descompactar o ZIP e ler o arquivo interno correto
         window.processarPlanilha = function(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -530,7 +544,6 @@
                     JSZip.loadAsync(event.target.result).then(function(zip) {
                         let arquivoInterno = null;
                         
-                        // Localiza o primeiro arquivo válido no pacote ZIP
                         zip.forEach(function (relativePath, zipEntry) {
                             if (!zipEntry.dir) {
                                 const subExt = zipEntry.name.split('.').pop().toLowerCase();
@@ -546,7 +559,6 @@
                             return;
                         }
 
-                        // Processa baseado na extensão do arquivo extraído
                         const subExt = arquivoInterno.name.split('.').pop().toLowerCase();
                         if (subExt === 'csv') {
                             arquivoInterno.async("string").then(function(conteudoTxt) {
@@ -569,7 +581,6 @@
                 };
                 reader.readAsArrayBuffer(file);
             } else {
-                // Fluxo normal para arquivos .xlsx ou .csv diretos
                 reader.onload = async (event) => {
                     try {
                         const workbook = XLSX.read(new Uint8Array(event.target.result), { type: 'array' });
@@ -583,7 +594,7 @@
                 };
                 reader.readAsArrayBuffer(file);
             }
-            e.target.value = ''; // Limpa o input para novos uploads
+            e.target.value = '';
         }
 
         window.copiarTOsDaFicha = function(cidadeFiltro) {
@@ -653,7 +664,6 @@
             const catPac = cat.reduce((a, b) => a + b.qtdRepeticoes, 0);
             const mcPac = mc.reduce((a, b) => a + b.qtdRepeticoes, 0);
 
-            // Injeta os valores direto nos ID's dos cabeçalhos oficiais
             document.getElementById('head-cat-c-tos').innerText = cat.length;
             document.getElementById('head-cat-c-pac').innerText = catPac;
             document.getElementById('head-cat-qr-tos').innerText = cat.length;
