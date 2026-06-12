@@ -480,45 +480,50 @@
             atualizarContadoresDasPaginas();
         });
 
-        // FUNÇÃO CORRIGIDA COM FILTRAGEM INDEPENDENTE E ROBUSTA DE ROTAS
+        // NOVO ENGINE DE SALVAMENTO ROBUSTO COM HIGIENE DE DADOS E ANTI-DUPLICAÇÃO FANTASMA
         async function salvarDadosPlanilha(json) {
             const agrupado = {};
 
             json.forEach(linha => {
-                // Captura o nome da coluna de destino e padroniza o texto
-                const receiverName = String(linha['Receiver Name'] || '').toLowerCase().trim();
+                // Remove acentuações comuns para prevenir erros de codificação de texto da Shopee
+                const cidRaw = String(linha['Receiver Name'] || '')
+                    .normalize("NFD")
+                    .replace(/[\u0300-\u036f]/g, "")
+                    .toLowerCase()
+                    .trim();
+
+                // Captura e limpa o código da TO removendo espaços invisíveis
+                const toRaw = String(linha['TO Number'] || '').trim();
+
+                // PROTEÇÃO CRÍTICA: Se a TO for inválida, nula ou lixo de célula vazia, ignora
+                if (!toRaw || toRaw === 'undefined' || toRaw === 'null' || toRaw === '') {
+                    return;
+                }
+
                 let normal = "";
-                
-                // Validação estrita para Catalão (evita misturar rotas)
-                if (receiverName.includes("catalao") || receiverName.includes("catalão")) {
+                if (cidRaw.includes("catalao")) {
                     normal = "Catalão";
-                } 
-                // Validação estrita para Monte Carmelo
-                else if (receiverName.includes("monte carmelo") || receiverName.includes("marmelo") || receiverName.includes("mc-")) {
+                } else if (cidRaw.includes("monte carmelo") || cidRaw.includes("marmelo") || cidRaw.includes("mc-")) {
                     normal = "Monte Carmelo";
                 }
                 
-                // Processa a TO apenas se pertencer a uma das duas cidades mapeadas
+                // Se pertence a uma das nossas duas rotas válidas
                 if(normal) {
-                    const to = String(linha['TO Number'] || '').trim();
-                    // Evita gerar chaves nulas ou lixo de leitura de linhas vazias
-                    if (to && to !== 'undefined' && to !== '') {
-                        if(!agrupado[to]) {
-                            agrupado[to] = { 
-                                idTo: to, 
-                                cidade: normal, 
-                                isDataRow: true, 
-                                qtdRepeticoes: 0 
-                            };
-                        }
-                        agrupado[to].qtdRepeticoes++;
+                    if(!agrupado[toRaw]) {
+                        agrupado[toRaw] = { 
+                            idTo: toRaw, 
+                            cidade: normal, 
+                            isDataRow: true, 
+                            qtdRepeticoes: 0 
+                        };
                     }
+                    agrupado[toRaw].qtdRepeticoes++;
                 }
             });
 
             if (Object.keys(agrupado).length === 0) {
                 document.getElementById('msg-import').style.color = "#ef4444";
-                document.getElementById('msg-import').innerText = "⚠ Nenhuma TO válida de Catalão ou Monte Carmelo encontrada! Verifique os dados.";
+                document.getElementById('msg-import').innerText = "⚠ Erro: Nenhuma TO válida encontrada para Catalão ou Monte Carmelo. Verifique a planilha.";
                 return;
             }
 
@@ -526,7 +531,7 @@
             Object.values(agrupado).forEach(obj => batch.set(doc(db, "checklist_tos", `to_${obj.idTo}`), obj));
             await batch.commit();
             document.getElementById('msg-import').style.color = "#22c55e";
-            document.getElementById('msg-import').innerText = "✔ Planilha processada e sincronizada com sucesso!";
+            document.getElementById('msg-import').innerText = "✔ Planilha separada e sincronizada com sucesso!";
         }
 
         window.processarPlanilha = function(e) {
@@ -534,7 +539,7 @@
             if (!file) return;
 
             document.getElementById('msg-import').style.color = "#ff6a00";
-            document.getElementById('msg-import').innerText = "⏳ Lendo arquivo...";
+            document.getElementById('msg-import').innerText = "⏳ Lendo e tratando arquivo...";
 
             const ext = file.name.split('.').pop().toLowerCase();
             const reader = new FileReader();
@@ -555,7 +560,7 @@
 
                         if (!arquivoInterno) {
                             document.getElementById('msg-import').style.color = "#ef4444";
-                            document.getElementById('msg-import').innerText = "❌ Nenhum arquivo válido (.csv, .xlsx) no ZIP.";
+                            document.getElementById('msg-import').innerText = "❌ Nenhum arquivo de dados válido no ZIP.";
                             return;
                         }
 
@@ -576,7 +581,7 @@
                     }).catch(function(err) {
                         console.error(err);
                         document.getElementById('msg-import').style.color = "#ef4444";
-                        document.getElementById('msg-import').innerText = "❌ Erro ao descompactar o ZIP.";
+                        document.getElementById('msg-import').innerText = "❌ Falha ao descompactar pacote.";
                     });
                 };
                 reader.readAsArrayBuffer(file);
@@ -589,7 +594,7 @@
                     } catch (err) {
                         console.error(err);
                         document.getElementById('msg-import').style.color = "#ef4444";
-                        document.getElementById('msg-import').innerText = "❌ Erro ao ler a planilha.";
+                        document.getElementById('msg-import').innerText = "❌ Falha ao processar as tabelas.";
                     }
                 };
                 reader.readAsArrayBuffer(file);
@@ -606,7 +611,7 @@
             const textoParaCopiar = listFiltrada.map(t => t.idTo).join("\n");
             
             navigator.clipboard.writeText(textoParaCopiar).then(() => {
-                alert(`Sucesso! ${listFiltrada.length} TOs de ${cidadeFiltro} foram copiadas.`);
+                alert(`Sucesso! ${listFiltrada.length} TOs foram copiadas para a Área de Transferência.`);
             }).catch(err => {
                 console.error("Erro ao copiar: ", err);
             });
